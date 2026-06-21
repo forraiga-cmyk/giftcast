@@ -284,7 +284,7 @@ body{ font-family:'Hanken Grotesk',sans-serif; color:#e8edf5; background-color:#
 .mx-num{ width:70px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); border-radius:9px; color:#fff; padding:6px 9px; font-size:13px; font-family:'Hanken Grotesk'; text-align:right; outline:none; font-variant-numeric:tabular-nums; }
 .mx-num:focus{ border-color:rgba(45,212,191,.5); }
 .mx-unit{ color:#8b97ac; font-size:12px; min-width:34px; }
-.mx-sw{ position:relative; width:42px; height:24px; flex:none; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.14); cursor:pointer; transition:background .2s; }
+.mx-sw{ position:relative; width:42px; height:24px; flex:none; padding:0; margin:0; -webkit-appearance:none; appearance:none; -webkit-tap-highlight-color:transparent; touch-action:manipulation; border-radius:999px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.14); cursor:pointer; transition:background .2s; }
 .mx-sw.on{ background:rgba(45,212,191,.55); }
 .mx-sw span{ position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .2s; } .mx-sw.on span{ left:20px; }
 .mx-preset{ background:rgba(45,212,191,.14); border:1px solid rgba(45,212,191,.35); color:#5eead4; border-radius:10px; padding:7px 13px; font-family:'Hanken Grotesk'; font-weight:600; font-size:12.5px; cursor:pointer; }
@@ -817,7 +817,7 @@ function App(){
 
           <div className="mx-menu-row">
             <div className="t"><b>Túra mód</b><span>Motoros riasztások és küszöbök bekapcsolása</span></div>
-            <div className={"mx-sw "+(limits.enabled?"on":"")} onClick={()=>setLimits(p=>({...p,enabled:!p.enabled}))}><span></span></div>
+            <button type="button" className={"mx-sw "+(limits.enabled?"on":"")} onClick={()=>setLimits(p=>({...p,enabled:!p.enabled}))} aria-label="Túra mód"><span></span></button>
           </div>
 
           <div className="mx-menu-sec">
@@ -839,7 +839,7 @@ function App(){
             {NOTIF_PREFS.map((n,i)=>(
               <div className="mx-menu-row" key={i}>
                 <div className="t"><b>{n.h}</b><span>{n.d}</span></div>
-                <div className={"mx-sw "+(notif[i]?"on":"")} onClick={()=>setNotif(p=>p.map((v,j)=>j===i?!v:v))}><span></span></div>
+                <button type="button" className={"mx-sw "+(notif[i]?"on":"")} onClick={()=>setNotif(p=>p.map((v,j)=>j===i?!v:v))} aria-label={n.h}><span></span></button>
               </div>
             ))}
             <div style={{fontSize:11,color:"#8b97ac",marginTop:6,lineHeight:1.4}}>A push-értesítések a telefonos appban aktiválódnak — itt a beállítás előnézete.</div>
@@ -869,7 +869,7 @@ function App(){
   return (
     <div className="mx-inner">
       <div className="mx-head">
-        <div className="mx-brand" onClick={()=>setView("home")} style={{cursor:"pointer"}}><span className="mx-logo">◐</span><span>GiftCast</span><span className="mx-tag">multi-model · b3</span></div>
+        <div className="mx-brand" onClick={()=>setView("home")} style={{cursor:"pointer"}}><span className="mx-logo">◐</span><span>GiftCast</span><span className="mx-tag">multi-model · b4</span></div>
         <button className="mx-menubtn" aria-label="Menü" onClick={()=>setMenuOpen(true)}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </div>
       {MenuPanel()}
@@ -986,7 +986,7 @@ function App(){
                 <div className="mx-card-head" onClick={()=>setShowLimits(v=>!v)} style={{cursor:"pointer"}}><h3>🏍️ Motoros küszöbök</h3><span className="mx-sub-note">{showLimits?"▲ elrejtés":"▼ beállítás"}</span></div>
                 {showLimits&&(
                 <div className="rw-set rw-set-solo">
-                  <div className="rw-set-row"><span className="rw-set-title">Riasztások</span><button className="mx-preset" onClick={()=>setLimits({enabled:true,gust:50,pop:40,temp:4})}>Honda NC750X</button><div className={"mx-sw "+(limits.enabled?"on":"")} onClick={()=>setLimits(p=>({...p,enabled:!p.enabled}))}><span></span></div></div>
+                  <div className="rw-set-row"><span className="rw-set-title">Riasztások</span><button className="mx-preset" onClick={()=>setLimits({enabled:true,gust:50,pop:40,temp:4})}>Honda NC750X</button><button type="button" className={"mx-sw "+(limits.enabled?"on":"")} onClick={()=>setLimits(p=>({...p,enabled:!p.enabled}))} aria-label="Riasztások"><span></span></button></div>
                   <div className="rw-set-grid">
                     <label>Lökés ≥ <input className="mx-num" type="number" value={limits.gust} onChange={e=>setLimits(p=>({...p,gust:+e.target.value}))} /> km/h</label>
                     <label>Eső ≥ <input className="mx-num" type="number" value={limits.pop} onChange={e=>setLimits(p=>({...p,pop:+e.target.value}))} /> %</label>
