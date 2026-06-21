@@ -869,7 +869,7 @@ function App(){
   return (
     <div className="mx-inner">
       <div className="mx-head">
-        <div className="mx-brand" onClick={()=>setView("home")} style={{cursor:"pointer"}}><span className="mx-logo">◐</span><span>GiftCast</span><span className="mx-tag">multi-model · b5</span></div>
+        <div className="mx-brand" onClick={()=>setView("home")} style={{cursor:"pointer"}}><span className="mx-logo">◐</span><span>GiftCast</span><span className="mx-tag">multi-model · b6</span></div>
         <button className="mx-menubtn" aria-label="Menü" onClick={()=>setMenuOpen(true)}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </div>
       {MenuPanel()}
@@ -1460,8 +1460,7 @@ const MAP_BASES=[
   {id:"terrain",label:"Domborzat",ico:"⛰️"},
 ];
 const MAP_LAYERS=[
-  {id:"precip",label:"Csapadék",ico:"🌧️",animated:true,cap:"Csapadékintenzitás — valós idejű radar (RainViewer)"},
-  {id:"precipfc",label:"Csapadék-előrejelzés",ico:"📅",fcanim:true,cap:"Órás csapadék-előrejelzés — ma és holnap (Open-Meteo modell)"},
+  {id:"precip",label:"Csapadék",ico:"🌧️",precipts:true,cap:"Csapadék — mostantól előre: élő radar + nowcast, majd óránkénti előrejelzés +1 napra (RainViewer + Open-Meteo)"},
   {id:"temp",label:"Hőmérséklet",ico:"🌡️",field:"temperature_2m",unit:"°C",dom:[-15,40],cap:"Hőmérséklet, 2 m — Open-Meteo rács"},
   {id:"wind",label:"Szél",ico:"💨",field:"wind_speed_10m",unit:" km/h",dom:[0,60],cap:"Szélsebesség, 10 m — Open-Meteo rács"},
   {id:"humidity",label:"Páratartalom",ico:"💧",field:"relative_humidity_2m",unit:"%",dom:[0,100],cap:"Relatív páratartalom — Open-Meteo rács"},
@@ -1489,38 +1488,55 @@ function WeatherMap({lat,lon}){
   const [vw,setVw]=useState(680);
   const [err,setErr]=useState(false);
   const [pre,setPre]=useState({done:0,total:0});
-  const [grid,setGrid]=useState(null);   // {cols,rows,vals,layer}
+  const [grid,setGrid]=useState(null);   // statikus rács: {cols,rows,vals,layer}
   const [gLoad,setGLoad]=useState(false);
-  const [fc,setFc]=useState(null);       // forecast precip: {cols,rows,hours:[[v..]],frames:[{iso,ts}],startIdx}
+  const [fc,setFc]=useState(null);       // előrejelzés rács: {cols,rows,hours:[[v..]],frames:[{iso,ts}]}
   const boxRef=useRef(null),timer=useRef(null),canvasRef=useRef(null);
   const VH=330,T=256;
   const curL=MAP_LAYERS.find(l=>l.id===layer);
-  const animated=!!curL.animated;
-  const fcAnim=!!curL.fcanim;
-  const maxZ=animated?7:11;
-  const frames= animated ? (maps?maps.radar:[]) : (fcAnim&&fc ? fc.frames : []);
+  const tl=!!curL.precipts;               // csapadék-idővonal (radar most→nowcast→előrejelzés +1 nap)
+  const maxZ=tl?7:11;
+
+  // Egyesített, előre néző idővonal: [most radar] + [radar nowcast] + [órás előrejelzés ... +1 nap]
+  const frames=useMemo(()=>{
+    if(!tl) return [];
+    const out=[], now=Date.now();
+    if(maps&&maps.radar&&maps.radar.length){
+      const past=maps.radar.filter(f=>!f.future);
+      const last=past.length?past[past.length-1]:null;
+      if(last) out.push({kind:"radar",path:last.path,ts:last.time*1000});
+      maps.radar.filter(f=>f.future).forEach(f=>out.push({kind:"radar",path:f.path,ts:f.time*1000}));
+    }
+    if(fc&&fc.frames&&fc.frames.length){
+      const lastTs=out.length?out[out.length-1].ts:now, limit=now+24*3600*1000;
+      fc.frames.forEach((f,hi)=>{ if(f.ts>lastTs+60000 && f.ts<=limit) out.push({kind:"fc",hourIdx:hi,ts:f.ts}); });
+    }
+    return out;
+  },[tl,maps,fc]);
 
   useEffect(()=>{ const m=()=>{ if(boxRef.current) setVw(boxRef.current.clientWidth); }; m(); window.addEventListener("resize",m); return ()=>window.removeEventListener("resize",m); },[]);
   useEffect(()=>{ let cancel=false; (async()=>{ try{ const j=await(await fetch("https://api.rainviewer.com/public/weather-maps.json")).json(); if(cancel) return;
       const radar=[...(((j.radar&&j.radar.past)||[]).map(f=>({...f,future:false}))),...(((j.radar&&j.radar.nowcast)||[]).map(f=>({...f,future:true})))];
       setMaps({host:j.host,radar}); }catch{ if(!cancel) setErr(true); } })(); return ()=>{cancel=true;}; },[]);
 
-  useEffect(()=>{ if(animated&&frames.length){ const past=frames.filter(x=>!x.future).length; setIdx(Math.max(0,past-1)); } else if(fcAnim&&fc){ setIdx(fc.startIdx||0); } else setIdx(0); },[layer,maps,fc]);
-  useEffect(()=>{ if(!playing||!(animated||fcAnim)||frames.length===0) return; timer.current=setInterval(()=>setIdx(i=>(i+1)%frames.length),750); return ()=>clearInterval(timer.current); },[playing,animated,fcAnim,frames]);
+  // mindig a mostani időponttól (az idővonal első kockája = most)
+  useEffect(()=>{ setIdx(0); },[layer,maps,fc]);
+  useEffect(()=>{ if(!playing||!tl||frames.length===0) return; timer.current=setInterval(()=>setIdx(i=>(i+1)%frames.length),750); return ()=>clearInterval(timer.current); },[playing,tl,frames]);
+  useEffect(()=>{ if(tl&&z>7) setZ(7); },[tl]);
 
-  // RainViewer csempék előtöltése (csak csapadék)
-  useEffect(()=>{ if(animated&&z>7) setZ(7); },[animated]);
-  useEffect(()=>{ if(!animated||!maps||frames.length===0) return;
+  // RainViewer csempék előtöltése (csak a radar-kockákhoz)
+  useEffect(()=>{ if(!tl||!maps||!frames.length) return;
+    const radarFrames=frames.filter(f=>f.kind==="radar"); if(!radarFrames.length) return;
     const n2=Math.pow(2,z), cx2=((lon+180)/360)*n2, latR2=lat*Math.PI/180, cy2=((1-Math.log(Math.tan(latR2)+1/Math.cos(latR2))/Math.PI)/2)*n2;
     const oX=cx2*T-vw/2,oY=cy2*T-VH/2, xa=Math.floor(oX/T),xb=Math.floor((oX+vw)/T),ya=Math.floor(oY/T),yb=Math.floor((oY+VH)/T);
     const coords=[]; for(let tx=xa;tx<=xb;tx++) for(let ty=ya;ty<=yb;ty++){ if(ty<0||ty>=n2) continue; coords.push({wx:((tx%n2)+n2)%n2,wy:ty}); }
-    const urls=[]; coords.forEach(c=>{ frames.forEach(f=>urls.push(maps.host+f.path+"/256/"+z+"/"+c.wx+"/"+c.wy+"/2/1_1.png")); });
+    const urls=[]; coords.forEach(c=>{ radarFrames.forEach(f=>urls.push(maps.host+f.path+"/256/"+z+"/"+c.wx+"/"+c.wy+"/2/1_1.png")); });
     let done=0,alive=true; setPre({done:0,total:urls.length});
     urls.forEach(u=>{ const img=new Image(); const tick=()=>{ if(alive) setPre({done:++done,total:urls.length}); }; img.onload=tick; img.onerror=tick; img.src=u; });
-    return ()=>{alive=false;}; },[animated,maps,layer,z,lat,lon,vw,frames.length]);
+    return ()=>{alive=false;}; },[tl,maps,z,lat,lon,vw,frames.length]);
 
-  // Open-Meteo rács a látható területre (nem-animált rétegek) — egyetlen kérés, kulcs nélkül
-  useEffect(()=>{ if(animated||fcAnim){ setGrid(null); return; }
+  // Open-Meteo statikus rács (nem-idővonalas rétegek: hő, szél, stb.) — egyetlen kérés, kulcs nélkül
+  useEffect(()=>{ if(tl){ setGrid(null); return; }
     const fld=curL.field; if(!fld) return;
     let alive=true; setGLoad(true);
     const nn=Math.pow(2,z), wpx=T*nn;
@@ -1531,10 +1547,10 @@ function WeatherMap({lat,lon}){
     for(let j=0;j<rows;j++) for(let i=0;i<cols;i++){ lats.push((latT+(latB-latT)*j/(rows-1)).toFixed(4)); lons.push((lonL+(lonR-lonL)*i/(cols-1)).toFixed(4)); }
     const url="https://api.open-meteo.com/v1/forecast?latitude="+lats.join(",")+"&longitude="+lons.join(",")+"&current="+fld+(fld==="wind_speed_10m"?"&wind_speed_unit=kmh":"");
     (async()=>{ try{ const r=await(await fetch(url)).json(); if(!alive) return; const list=Array.isArray(r)?r:[r]; const vals=list.map(o=>(o&&o.current)?o.current[fld]:null); setGrid({cols,rows,vals,layer}); }catch(e){ if(alive) setGrid({cols,rows,vals:[],layer}); } finally{ if(alive) setGLoad(false); } })();
-    return ()=>{alive=false;}; },[animated,fcAnim,layer,z,lat,lon,vw]);
+    return ()=>{alive=false;}; },[tl,layer,z,lat,lon,vw]);
 
-  // Csapadék-előrejelzés rács: óránkénti precipitation a látható területre, ma + holnap (48 óra)
-  useEffect(()=>{ if(!fcAnim){ return; }
+  // Csapadék-előrejelzés rács: óránkénti precipitation a látható területre (ma + holnap)
+  useEffect(()=>{ if(!tl){ return; }
     let alive=true; setFc(null);
     const nn=Math.pow(2,z), wpx=T*nn;
     const cwx=((lon+180)/360)*wpx, latRq=lat*Math.PI/180, cwy=((1-Math.log(Math.tan(latRq)+1/Math.cos(latRq))/Math.PI)/2)*wpx;
@@ -1547,32 +1563,32 @@ function WeatherMap({lat,lon}){
         const list=Array.isArray(r)?r:[r];
         const times=(list[0]&&list[0].hourly&&list[0].hourly.time)||[];
         const hours=times.map((_,hi)=>list.map(o=>(o&&o.hourly&&o.hourly.precipitation)?o.hourly.precipitation[hi]:null));
-        const frames=times.map(t=>({iso:t,ts:new Date(t).getTime()}));
-        const now=Date.now(); let startIdx=frames.findIndex(f=>f.ts>=now-1800000); if(startIdx<0)startIdx=0;
-        if(alive) setFc({cols,rows,hours,frames,startIdx});
-      }catch(e){ if(alive) setFc({cols,rows,hours:[],frames:[],startIdx:0}); } })();
-    return ()=>{alive=false;}; },[fcAnim,z,lat,lon,vw]);
+        const fr2=times.map(t=>({iso:t,ts:new Date(t).getTime()}));
+        if(alive) setFc({cols,rows,hours,frames:fr2});
+      }catch(e){ if(alive) setFc({cols,rows,hours:[],frames:[]}); } })();
+    return ()=>{alive=false;}; },[tl,z,lat,lon,vw]);
 
-  // rács kirajzolása canvasra (sima, interpolált hőtérkép)
+  // statikus rács kirajzolása (sima, interpolált hőtérkép)
   useEffect(()=>{ const cv=canvasRef.current; if(!cv) return; const ctx=cv.getContext("2d");
-    if(animated||fcAnim||!grid||grid.layer!==layer||!grid.vals.length){ if(!fcAnim){ cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); } return; }
+    if(tl||!grid||grid.layer!==layer||!grid.vals.length){ if(!tl){ cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); } return; }
     const cols=grid.cols,rows=grid.rows,vals=grid.vals, stops=CMAP[layer]||CMAP.temp, dmin=curL.dom[0], dmax=curL.dom[1];
     const off=document.createElement("canvas"); off.width=cols; off.height=rows; const oc=off.getContext("2d"); const id=oc.createImageData(cols,rows);
     for(let k=0;k<cols*rows;k++){ const v=vals[k]; if(v==null||isNaN(v)){ id.data[k*4+3]=0; continue; } const c=cmapColor(stops,(v-dmin)/(dmax-dmin)); id.data[k*4]=c[0]; id.data[k*4+1]=c[1]; id.data[k*4+2]=c[2]; id.data[k*4+3]=255; }
     oc.putImageData(id,0,0);
     cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high"; ctx.drawImage(off,0,0,cols,rows,0,0,vw,VH);
-  },[grid,vw,layer,animated,fcAnim]);
+  },[grid,vw,layer,tl]);
 
-  // csapadék-előrejelzés kirajzolása canvasra (az aktuális óra, áttetsző, 0,1 mm alatt átlátszó)
+  // idővonal előrejelzés-kockáinak kirajzolása canvasra (radar-kockáknál üres → a radarcsempék látszanak)
   useEffect(()=>{ const cv=canvasRef.current; if(!cv) return; const ctx=cv.getContext("2d");
-    if(!fcAnim){ return; }
-    if(!fc||!fc.hours.length||!fc.hours[idx]){ cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); return; }
-    const cols=fc.cols,rows=fc.rows,vals=fc.hours[idx], stops=CMAP.precipfc, dmax=8;
+    if(!tl){ return; }
+    const f=frames[idx];
+    if(!f||f.kind!=="fc"||!fc||!fc.hours[f.hourIdx]){ cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); return; }
+    const cols=fc.cols,rows=fc.rows,vals=fc.hours[f.hourIdx], stops=CMAP.precipfc, dmax=8;
     const off=document.createElement("canvas"); off.width=cols; off.height=rows; const oc=off.getContext("2d"); const im=oc.createImageData(cols,rows);
     for(let k=0;k<cols*rows;k++){ const v=vals[k]; if(v==null||isNaN(v)||v<0.1){ im.data[k*4+3]=0; continue; } const c=cmapColor(stops,Math.min(1,v/dmax)); im.data[k*4]=c[0]; im.data[k*4+1]=c[1]; im.data[k*4+2]=c[2]; im.data[k*4+3]=235; }
     oc.putImageData(im,0,0);
     cv.width=vw; cv.height=VH; ctx.clearRect(0,0,vw,VH); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high"; ctx.drawImage(off,0,0,cols,rows,0,0,vw,VH);
-  },[fc,idx,vw,fcAnim]);
+  },[tl,frames,idx,fc,vw]);
 
   const n=Math.pow(2,z), cx=((lon+180)/360)*n, latR=lat*Math.PI/180, cy=((1-Math.log(Math.tan(latR)+1/Math.cos(latR))/Math.PI)/2)*n;
   const originX=cx*T-vw/2, originY=cy*T-VH/2;
@@ -1585,10 +1601,9 @@ function WeatherMap({lat,lon}){
     if(base==="plain") return "https://a.basemaps.cartocdn.com/rastertiles/voyager/"+z+"/"+wx+"/"+wy+".png";
     return "https://a.basemaps.cartocdn.com/dark_all/"+z+"/"+wx+"/"+wy+".png";
   };
-  const precipSrc=(wx,wy)=> (maps&&fr)?maps.host+fr.path+"/256/"+z+"/"+wx+"/"+wy+"/2/1_1.png":null;
-  const stamp=fr?(fr.time?new Date(fr.time*1000):new Date(fr.ts)).toLocaleTimeString("hu-HU",{hour:"2-digit",minute:"2-digit"}):"";
-  let fcLabel="";
-  if(fcAnim&&fr){ const d=new Date(fr.ts), t0=new Date(); const sameDay=d.toDateString()===t0.toDateString(); const tom=new Date(t0.getTime()+86400000); const isTom=d.toDateString()===tom.toDateString(); fcLabel=(sameDay?"Ma ":(isTom?"Holnap ":""))+d.toLocaleTimeString("hu-HU",{hour:"2-digit",minute:"2-digit"}); }
+  const radarOn= tl&&fr&&fr.kind==="radar"&&maps;
+  let tLabel="", tKind="";
+  if(tl&&fr){ const d=new Date(fr.ts), t0=new Date(); const sameDay=d.toDateString()===t0.toDateString(); const tom=new Date(t0.getTime()+86400000); const isTom=d.toDateString()===tom.toDateString(); const hm=d.toLocaleTimeString("hu-HU",{hour:"2-digit",minute:"2-digit"}); tLabel=(sameDay?"Ma ":(isTom?"Holnap ":""))+hm; tKind= fr.kind==="radar" ? (idx===0?"radar · most":"radar · nowcast") : "előrejelzés"; }
 
   return (
     <div className="rad-wrap">
@@ -1598,32 +1613,29 @@ function WeatherMap({lat,lon}){
       <div className="map-row"><span className="map-row-lbl">Réteg</span>
         <div className="map-modes">{MAP_LAYERS.map(l=>(<button key={l.id} title={l.label} className={"map-mode "+(layer===l.id?"on":"")} onClick={()=>setLayer(l.id)}>{l.ico}</button>))}</div>
       </div>
-      {err&&!maps?(<div className="rad-err">A térkép adatai jelenleg nem elérhetők.</div>):(
+      {err&&!maps&&tl?(<div className="rad-err">A térkép adatai jelenleg nem elérhetők.</div>):(
       <React.Fragment>
         <div className="rad-box" ref={boxRef} style={{height:VH}}>
           {tiles.map(t=>(<img key={"b"+t.key} alt="" className="rad-tile" src={baseSrc(t.wx,t.wy)} style={{left:t.left,top:t.top,width:T,height:T}} />))}
-          {animated&&tiles.map(t=>{ const s=precipSrc(t.wx,t.wy); return s?(<img key={"o"+t.key} alt="" className="rad-tile" src={s} onError={e=>{e.target.style.visibility="hidden";}} style={{left:t.left,top:t.top,width:T,height:T,opacity:0.85}} />):null; })}
-          {!animated&&<canvas ref={canvasRef} style={{position:"absolute",left:0,top:0,width:vw+"px",height:VH+"px",opacity:fcAnim?0.8:0.62,pointerEvents:"none"}} />}
+          {radarOn&&tiles.map(t=>{ const s=maps.host+fr.path+"/256/"+z+"/"+t.wx+"/"+t.wy+"/2/1_1.png"; return (<img key={"o"+t.key} alt="" className="rad-tile" src={s} onError={e=>{e.target.style.visibility="hidden";}} style={{left:t.left,top:t.top,width:T,height:T,opacity:0.85}} />); })}
+          <canvas ref={canvasRef} style={{position:"absolute",left:0,top:0,width:vw+"px",height:VH+"px",opacity:tl?0.8:0.62,pointerEvents:"none"}} />
           <div className="rad-pin" style={{left:vw/2,top:VH/2}}><span></span></div>
           <div className="rad-zoom"><button onClick={()=>setZ(v=>Math.min(maxZ,v+1))}>＋</button><button onClick={()=>setZ(v=>Math.max(4,v-1))}>−</button></div>
-          {animated&&!maps&&<div className="rad-loading">betöltés…</div>}
-          {!animated&&!fcAnim&&gLoad&&<div className="rad-loading">betöltés…</div>}
-          {fcAnim&&!fc&&<div className="rad-loading">betöltés…</div>}
-          {animated&&pre.total>0&&pre.done<pre.total&&<div className="rad-pre"><div className="rad-pre-bar" style={{width:Math.round(pre.done/pre.total*100)+"%"}}></div></div>}
+          {tl&&!maps&&!fc&&<div className="rad-loading">betöltés…</div>}
+          {!tl&&gLoad&&<div className="rad-loading">betöltés…</div>}
+          {tl&&pre.total>0&&pre.done<pre.total&&<div className="rad-pre"><div className="rad-pre-bar" style={{width:Math.round(pre.done/pre.total*100)+"%"}}></div></div>}
         </div>
-        {(animated||fcAnim)?(
+        {tl?(
           <React.Fragment>
             <div className="rad-ctrls">
               <button className="rad-play" onClick={()=>setPlaying(p=>!p)}>{playing?"⏸":"▶"}</button>
               <input className="rad-slider" type="range" min="0" max={Math.max(0,frames.length-1)} value={idx} onChange={e=>{setPlaying(false);setIdx(+e.target.value);}} />
-              <span className={"rad-time "+(((fr&&fr.future)||fcAnim)?"fut":"")}>{fcAnim?(fcLabel||"…"):((fr&&fr.future?"előrejelzés ":"")+stamp)}</span>
+              <span className={"rad-time "+(fr&&fr.kind==="fc"?"fut":"")}>{tLabel}{tKind?(" · "+tKind):""}</span>
             </div>
-            {fcAnim&&(
-              <div style={{margin:"9px 4px 0"}}>
-                <div style={{height:9,borderRadius:5,background:cmapCss(CMAP.precipfc)}}></div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#9aa6b6",marginTop:5}}><span>0 mm</span><span>4</span><span>8+ mm/ó</span></div>
-              </div>
-            )}
+            <div style={{margin:"9px 4px 0"}}>
+              <div style={{height:9,borderRadius:5,background:cmapCss(CMAP.precipfc)}}></div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#9aa6b6",marginTop:5}}><span>0 mm</span><span>4</span><span>8+ mm/ó (előrejelzés)</span></div>
+            </div>
           </React.Fragment>
         ):(
           <div style={{margin:"11px 4px 0"}}>
